@@ -7,7 +7,7 @@ require Exporter;
 require DynaLoader;
 @EXPORT = qw(CD_PLAY CD_PAUSE CD_MUTE CD_FINISH CD_ERR CD_STOP CD_OFFLINE);
 @ISA = qw(Exporter DynaLoader);
-$VERSION = '0.20';
+$VERSION = '0.25';
 
 bootstrap AudioCD::Mac $VERSION;
 
@@ -24,7 +24,8 @@ BEGIN {
 
 sub new {
     my $cd = _GetDrive() or die $^E;
-    bless {DRIVE=>$cd}, shift;
+    my $self = bless({DRIVE=>$cd}, shift);
+    return($self->cd_toc ? $self : undef);
 }
 
 sub volume {
@@ -43,28 +44,14 @@ sub play {
         $self->continue;
     } else {
         $track ||= 1;
-        _Play($self->{DRIVE}, unpack("s*", pack "l", _HexToBCD($track)),
-            unpack("s*", pack "l", _HexToBCD($self->last_track())));
+		_Stop($self->{DRIVE}, _fix_track($self->last_track)) or return;
+        _Play($self->{DRIVE}, _fix_track($track));
     }
 }
 
 sub eject {
-    warn (<<EOT) && return;
-This wil likley crash your computer, so don't use it, but if you
-fix it, send me a patch.
-EOT
     my $self = shift;
-    my $eject = _Eject($self->{DRIVE});
-    if ($eject == 1) {
-        return 1;
-    } elsif (!$eject) {
-        return;
-    } else {
-        my @eject = split /\t/, $eject;
-        Eject($eject[0]);
-        foreach (@eject) {UnmountVol($_)}
-        return 1;
-    }
+    _Eject($self->{DRIVE});
 }
 
 sub pause {
@@ -77,14 +64,9 @@ sub continue {
     _Continue($self->{DRIVE}, $self->status);
 }
 
-sub info {
-    my $self = shift;
-    map {BCDToHex($_)} split "\t", _Info($self->{DRIVE});
-}
-
 sub stop {
     my $self = shift;
-    _Stop($self->{DRIVE});
+    _Stop($self->{DRIVE}, 0, 0);
 }
 
 sub status {
@@ -92,13 +74,19 @@ sub status {
     _Status($self->{DRIVE});
 }
 
+sub info {
+    my $self = shift;
+    map {_BCDToHex($_)} split("\t", _Info($self->{DRIVE}));
+}
+
 sub cddb_toc {
     my $self = shift;
     my $toc = $self->cd_toc() or return;
+    my @toc;
     foreach (@$toc) {
-        $_ = sprintf "%d\t%d\t%d\t%d", @{$_}[0..2], ($$_[1]*60+$$_[2])*75+$$_[3];
+        push @toc, sprintf "%d\t%d\t%d\t%d", @{$_}[0..3];
     }
-    return $toc;
+    return @toc;
 }
 
 sub cd_toc {
@@ -115,9 +103,11 @@ sub cd_toc {
 
     foreach my $entry (@tocb) {
         my(@t1, @t2);
+        next if $entry =~ /-/;
         @t1 = split(/\t/, $entry);
         @t2 = map {_BCDToHex($_)} @t1;
         $t2[0] = 999 if $t1[0] == 999;
+        next if $t1[0] == 0;
         push @tocf, [@t2];
     }
     return [@tocf];
@@ -125,7 +115,7 @@ sub cd_toc {
 
 sub last_track {
     my $self = shift;
-    my $a = $self->cd_toc();
+    my $a = $self->cd_toc() or die $^E;
     my $i = -2;
     $i-- while $$a[$i]->[0] < 1;
     return $$a[$i]->[0];
@@ -159,6 +149,8 @@ sub _HexToBCD {
     return($result);
 }
 
+sub _fix_track {unpack("s*", pack "l", _HexToBCD(shift))}
+
 1;
 __END__
 
@@ -168,10 +160,44 @@ AudioCD::Mac - MacPerl extension for controlling Audio CDs
 
 =head1 SYNOPSIS
 
+    #!perl -w
     use AudioCD;
+    use strict;
     my $cd = new AudioCD;
+
     $cd->volume(255);
-    $cd->play();
+    $cd->play(2);
+    print "Now playing\n" if $cd->status == CD_PLAY;
+    printf "Volume is %d\n", $cd->volume;
+    sleep(5);
+
+    $cd->pause;
+    print "Now paused\n" if $cd->status == CD_PAUSE;
+    sleep(5);
+
+    $cd->volume(100);
+    $cd->continue;
+    print "Now playing\n" if $cd->status == CD_PLAY;
+    printf "Volume is %d\n", $cd->volume;
+    sleep(5);
+
+    my @info = $cd->info;
+    printf "Currently at track %d, %.2d:%.2d\n", @info[0..2];
+
+    $cd->stop;
+    my $status = $cd->status;
+    print "Now stopped\n" if
+        ($status == CD_FINISH || $status == CD_STOP);
+
+    if (do 'CDDB.pm') {  # sold separately
+        my $cddb = new CDDB;
+        my @cddb_info = $cddb->calculate_id( $cd->cddb_toc );
+        my @discs = $cddb->get_discs(@cddb_info[0, 3, 4]);
+        print "You were probably listening to $discs[0]->[2]\n";
+    }
+
+    $cd->eject;
+
 
 =head1 DESCRIPTION
 
@@ -241,8 +267,7 @@ Will continue playing if paused.
 
 =item eject
 
-Will eject the CD drive.  Will not unmount the volume (yet), so don't
-use this unless the drive is empty.
+Will unmount the volumes on the drive if any, and then eject the tray.
 
 
 =item volume([LEFT_VOLUME [, RIGHT_VOLUME]])
@@ -281,21 +306,20 @@ turns out to be wrong, let me know.
 
 =over 4
 
-=item Add support for multiple drives
+=item Change interface to work well with others (Tuomas' Linux code)
 
-=item Add support for moving forward/backward in tracks, and scanning.
+=item Add support for multiple drives, multiple volumes on drive
+
+=item Add support for moving forward/backward in tracks, and scanning
 
 =item Add support for modes (stereo/mono/etc., random/program/repeat/etc.)
 
-=back
+=item Add support to add/extract data in the CD Remote Programs file
 
-
-=head1 BUGS
-
-=over 4
-
-=item C<eject> is busted.  Kinda works, except for when it totally crashes
-the computer.
+=item Need good test suite ... don't know how this should work, since
+I won't have good data to test against.  Maybe I should just play some
+tracks, change the volume, print out the number of tracks and have the
+user say whether or not it passes.
 
 =back
 
@@ -309,10 +333,29 @@ Copyright (c) 1998 Chris Nandor.  All rights reserved.  This program is free
 software; you can redistribute it and/or modify it under the same terms as 
 Perl itself.  Please see the Perl Artistic License.
 
+Special thanks to Matthias Neeracher for help with MacPerl XS and C,
+and Glenn Howes E<lt>grhowes@kagi.comE<gt> for his code examples that helped
+me understand this stuff.
 
-=head1 VERSION
+    http://www.xnet.com/~grhowes/html/helpful.html
+
+For more info, check out Technote DV22:
+
+    http://developer.apple.com/technotes/dv/dv_22.html
+
+=head1 HISTORY
 
 =over 4
+
+=item v0.25, Thursday, December 11, 1998
+
+Significant clean up of Perl and XS code, lots of misc. changes.
+
+Hopefully fixed C<cd_toc> to give all the right values.
+
+Fixed C<eject> problems.
+
+   "no pointer is a pointer, too" -- Matthias Neeracher
 
 =item v0.20, Wednesday, December 9, 1998
 
@@ -323,6 +366,10 @@ Renamed to C<AudioCD>, added controls for Audio CD.
 First version, made for Mac OS to get CDDB TOC data.
 
 =back
+
+=head1 VERSION
+
+v0.25, Thursday, December 11, 1998
 
 
 =head1 SEE ALSO

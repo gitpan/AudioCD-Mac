@@ -13,28 +13,31 @@
          #pragma options align=reset
 #endif
 
-  /* Ã status status */
-  /* Ã info info */
-  /* Ã eject b */
-  /* Ã pause b */
-  /* Ã continue b */
-  /* Ã play ([track]) b */
-  /* Ã stop b */
-  /* volume ([level]) level */
-  /* forward info */
-  /* reverse info */
-  /* scan_forward info */
-  /* scan_reverse info */
-  /* play_mode ? */
+void FillCntrlParamBlock
+    (CntrlParam *myPB, short drvRefNum, short csCode) {
+	int 		    i, l;
+	short		    *clearPtr;
+
+	clearPtr = (short *) myPB;
+	l = sizeof(CntrlParam)/sizeof(short);
+	for (i=0; i < l; i++)
+		*clearPtr++ = 0;
+
+    myPB->ioCompletion = 0;
+    myPB->ioVRefNum = 1;
+    myPB->ioCRefNum = drvRefNum;
+    myPB->csCode = csCode;
+}
+
 
 MODULE = AudioCD::Mac		PACKAGE = AudioCD::Mac
 
 short
 _GetDrive()
-    PREINIT:
-    short drvRefNum;
-
     CODE:
+    short           drvRefNum;
+
+    /* Multiple CD drives ... ? */
     if (gLastMacOSErr = OpenDriver("\p.AppleCD", &drvRefNum))
         XSRETURN_UNDEF;
 
@@ -45,18 +48,16 @@ _GetDrive()
 
 char *
 _GetToc(drvRefNum)
-    short drvRefNum;
-    PREINIT:
-    CntrlParam myPB;
-    char myToc[512];
-    char retToc[2048];
-    int cToc;
+    short           drvRefNum;
 
     CODE:
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 100;
+    CntrlParam      myPB;
+    char            myToc[512];
+    char            retToc[2048];
+    int             cToc;
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 100);
+
     myPB.csParam[0] = 4;
     *(Ptr *)&myPB.csParam[1] = myToc;
 
@@ -71,6 +72,7 @@ _GetToc(drvRefNum)
             cToc = 512;
         }
     }
+
     RETVAL = retToc;
 
     OUTPUT:
@@ -78,81 +80,33 @@ _GetToc(drvRefNum)
 
 short
 _Status(drvRefNum)
-    short drvRefNum;
+    short           drvRefNum;
 
     CODE:
-    CntrlParam myPB;
-    short status;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 107;
+    CntrlParam      myPB;
+    short           status;
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 107);
 
     if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
         XSRETURN_UNDEF;
 
     status = ((myPB.csParam[0] >> 8) & 255);
+
     RETVAL = status;
 
     OUTPUT:
     RETVAL
 
-char *
-_Eject(drvRefNum)
-    short drvRefNum;
-
-    CODE:
-    OSErr           myErr;
-    HParamBlockRec  myVol;
-    const short     kMaxRefNums = 8;
-    short           vRefNums[kMaxRefNums+1];
-    short           numVolumes = 0;
-    char            vols[255];
-
-    myVol.volumeParam.ioCompletion = 0L;
-    myVol.volumeParam.ioVolIndex = 0;
-
-    do {
-        myVol.volumeParam.ioVolIndex++;
-        myErr = PBHGetVInfoSync(&myVol);
-        if (!myErr && myVol.volumeParam.ioVDRefNum == drvRefNum) {
-            vRefNums[numVolumes] = myVol.volumeParam.ioVRefNum;
-            sprintf(vols, "%s\t%d", vols, vRefNums[numVolumes]);
-            numVolumes++;
-        }
-    } while (!myErr && numVolumes < kMaxRefNums);
-
-    if (numVolumes == 0) {
-        CntrlParam myPB;
-        myPB.ioCompletion = 0;
-        myPB.ioVRefNum = 1;
-        myPB.ioCRefNum = drvRefNum;
-        myPB.csCode = 7;
-
-        if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
-            XSRETURN_UNDEF;
-
-        RETVAL = "1";
-    } else {
-        RETVAL = vols;
-    }
-
-
-    OUTPUT:
-    RETVAL
-
-int
+short
 _Pause(drvRefNum, status)
-    short drvRefNum;
-    short status;
+    short           drvRefNum;
+    short           status;
 
     CODE:
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 105;
+    CntrlParam      myPB;
 
+    FillCntrlParamBlock(&myPB, drvRefNum, 105);
     if (status == 1) {
         myPB.csParam[0] = 0;
         myPB.csParam[1] = 0;
@@ -171,18 +125,15 @@ _Pause(drvRefNum, status)
     OUTPUT:
     RETVAL
 
-int
+short
 _Continue(drvRefNum, status)
-    short drvRefNum;
-    short status;
+    short           drvRefNum;
+    short           status;
 
     CODE:
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 105;
+    CntrlParam      myPB;
 
+    FillCntrlParamBlock(&myPB, drvRefNum, 105);
     if (status == 1) {
         myPB.csParam[0] = 0;
         myPB.csParam[1] = 0;
@@ -198,19 +149,25 @@ _Continue(drvRefNum, status)
     OUTPUT:
     RETVAL
 
-int
-_Stop(drvRefNum)
-    short drvRefNum;
+short
+_Stop(drvRefNum, end1, end2)
+    short           drvRefNum;
+    short           end1;
+    short           end2;
 
     CODE:
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 106;
-    myPB.csParam[0] = 0;
-    myPB.csParam[1] = 0;
-    myPB.csParam[2] = 0;
+    CntrlParam      myPB;
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 106);
+    if (end1 == 0 && end2 == 0) {
+        myPB.csParam[0] = 0;
+        myPB.csParam[1] = 0;
+        myPB.csParam[2] = 0;
+    } else {
+        myPB.csParam[0] = 2;
+        myPB.csParam[1] = end1;
+        myPB.csParam[2] = end2;
+    }
 
     if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
         XSRETURN_UNDEF;
@@ -220,28 +177,18 @@ _Stop(drvRefNum)
     OUTPUT:
     RETVAL
 
-int
-_Play(drvRefNum, start1, start2, end1, end2)
-    short drvRefNum;
-    short start1;
-    short start2;
-    short end1;
-    short end2;
+short
+_Play(drvRefNum, start1, start2)
+    short           drvRefNum;
+    short           start1;
+    short           start2;
 
     CODE:
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 106;
+    CntrlParam      myPB;
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 104);
+
     myPB.csParam[0] = 2;
-    myPB.csParam[1] = end1;
-    myPB.csParam[2] = end2;
-
-    if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
-        XSRETURN_UNDEF;
-
-    myPB.csCode = 104;
     myPB.csParam[1] = start1;
     myPB.csParam[2] = start2;
     myPB.csParam[3] = 0;
@@ -255,18 +202,16 @@ _Play(drvRefNum, start1, start2, end1, end2)
     OUTPUT:
     RETVAL
 
-int
+short
 _SetVolume(drvRefNum, vol_l, vol_r)
-    short drvRefNum;
-    short vol_l;
-    short vol_r;
+    short           drvRefNum;
+    short           vol_l;
+    short           vol_r;
 
     CODE:
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 109;
+    CntrlParam      myPB;
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 109);
     myPB.csParam[0] = (vol_l << 8) | vol_r;
 
     if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
@@ -279,21 +224,20 @@ _SetVolume(drvRefNum, vol_l, vol_r)
 
 char *
 _GetVolume(drvRefNum)
-    short drvRefNum;
+    short           drvRefNum;
 
     CODE:
-    char vol[8];
-    CntrlParam myPB;
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 112;
+    CntrlParam      myPB;
+    char            vol[8];
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 112);
 
     if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
         XSRETURN_UNDEF;
 
     sprintf(vol, "%u\t%u", (myPB.csParam[0] >> 8) & 255,
         myPB.csParam[0] & 255);
+
     RETVAL = vol;
 
     OUTPUT:
@@ -301,15 +245,13 @@ _GetVolume(drvRefNum)
 
 char *
 _Info(drvRefNum)
-    short drvRefNum;
+    short           drvRefNum;
 
     CODE:
-    CntrlParam myPB;
-    char info[30];
-    myPB.ioCompletion = 0;
-    myPB.ioVRefNum = 1;
-    myPB.ioCRefNum = drvRefNum;
-    myPB.csCode = 101;
+    CntrlParam      myPB;
+    char            info[30];
+
+    FillCntrlParamBlock(&myPB, drvRefNum, 101);
 
     if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
         XSRETURN_UNDEF;
@@ -325,6 +267,55 @@ _Info(drvRefNum)
     );
 
     RETVAL = info;
+
+    OUTPUT:
+    RETVAL
+
+short
+_Eject(drvRefNum)
+    short drvRefNum;
+
+    CODE:
+    OSErr           myErr;
+    Str63           volName;
+    HParamBlockRec  myVol;
+    const short     kMaxRefNums = 8;
+    short           vRefNums[kMaxRefNums+1];
+    short           numVolumes = 0;
+    int             i;
+
+    myVol.volumeParam.ioNamePtr = (StringPtr)&volName;
+    myVol.volumeParam.ioCompletion = 0L;
+    myVol.volumeParam.ioVolIndex = 0;
+
+    do {
+        myVol.volumeParam.ioVolIndex++;
+        myErr = PBHGetVInfoSync(&myVol);
+        if (!myErr && myVol.volumeParam.ioVDRefNum == drvRefNum) {
+            vRefNums[numVolumes] = myVol.volumeParam.ioVRefNum;
+            numVolumes++;
+        }
+    } while (!myErr && numVolumes < kMaxRefNums);
+
+    if (numVolumes == 0) {
+        CntrlParam      myPB;
+
+        FillCntrlParamBlock(&myPB, drvRefNum, 7);
+
+        if (gLastMacOSErr = PBControl((ParmBlkPtr)&myPB, false))
+            XSRETURN_UNDEF;
+
+    } else {
+        if (gLastMacOSErr = Eject(nil, vRefNums[0]))
+            XSRETURN_UNDEF;
+
+        for (i = 0; i < numVolumes; i++) {
+            if (gLastMacOSErr = UnmountVol(nil,vRefNums[i]))
+                XSRETURN_UNDEF;
+        }
+    }
+
+    RETVAL = 1;
 
     OUTPUT:
     RETVAL

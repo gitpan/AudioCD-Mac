@@ -7,7 +7,7 @@ require Exporter;
 require DynaLoader;
 @EXPORT = qw(CD_PLAY CD_PAUSE CD_MUTE CD_FINISH CD_ERR CD_STOP CD_OFFLINE);
 @ISA = qw(Exporter DynaLoader);
-$VERSION = '0.25';
+$VERSION = '0.25_51';
 
 bootstrap AudioCD::Mac $VERSION;
 
